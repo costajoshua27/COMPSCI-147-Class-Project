@@ -8,11 +8,11 @@ DHT20 DHT(&Wire);
 #define DATA_PIN 21
 #define CLOCK_PIN 22
 
-char ssid[] = "PDS-Resident";    // your network SSID (name) 
-char pass[] = "AC86fm!6"; // your network password (use for WPA, or use as key for WEP)
+char ssid[] = "";    // your network SSID (name) 
+char pass[] = ""; // your network password (use for WPA, or use as key for WEP)
 
 // Name of the server we want to connect to
-const char kHostname[] = "18.188.228.61";
+const char kHostname[] = "";
 const int kPort = 5000;
 
 // Number of milliseconds to wait without receiving any data before we give up
