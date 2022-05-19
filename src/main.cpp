@@ -1,165 +1,240 @@
 #include <Arduino.h>
-#include <WiFi.h>
-#include <HttpClient.h>
-#include "DHT20.h"
+// #include <cmath>
 
-DHT20 DHT(&Wire);
+#include "SparkFunLSM6DSO.h"
+#include "Wire.h"
 
-#define DATA_PIN 21
-#define CLOCK_PIN 22
+#include <BLEDevice.h>
+#include <BLEUtils.h>
+#include <BLEServer.h>
 
-char ssid[] = "UCInet Mobile Access";    // your network SSID (name) 
-char pass[] = ""; // your network password (use for WPA, or use as key for WEP)
+#include <TFT_eSPI.h>
 
-// Name of the server we want to connect to
-const char kHostname[] = "18.188.228.61";
-const int kPort = 5000;
+#define SERVICE_UUID        "4fafc201-1fb5-459e-8fcc-c5c9c331914b"
+#define CHARACTERISTIC_UUID "beb5483e-36e1-4688-b7f5-ea07361b26a8"
 
-// Number of milliseconds to wait without receiving any data before we give up
-const int kNetworkTimeout = 30*1000;
-// Number of milliseconds to wait if no data is available before trying again
-const int kNetworkDelay = 1000;
+bool ledOn = false;
+int steps = 0;
+int flag = 0;
+float threshold = 1;
+// For getting avg sample
+float xval[100] = {0};
+float yval[100] = {0};
+float zval[100] = {0};
+// For the samples we get from walking
+int samplesCount = 0;
+float totvect[100] = {0};
+float totave[100] = {0};
+float xaccl[100] = {0};
+float yaccl[100] = {0};
+float zaccl[100] = {0};
+float xavg, yavg, zavg;
+unsigned long lastTime;
 
-void setup() {
-  // Initialize humidity and temperature sensor
-  DHT.begin(DATA_PIN, CLOCK_PIN);
+class MyCallbacks: public BLECharacteristicCallbacks {
+  void onWrite(BLECharacteristic *pCharacteristic) {
+    std::string value = pCharacteristic->getValue();
+    if (value.length() > 0) {
+      // Read message and build it
+      String totalMessage = "";
+      Serial.println("*********");
+      Serial.print("New value: ");
+      for (int i = 0; i < value.length(); i++) {
+        Serial.print(value[i]);
+        totalMessage.concat(value[i]);
+      }
+      Serial.println();
+      Serial.println("*********");
 
-  // Start the serial connection
-  Serial.begin(9600);
+      // Handle on and off commands
+        if (totalMessage.equals("on")) {
+          ledOn = true;
+        } else if (totalMessage.equals("off")) {
+          ledOn = false;
+        }
+    }
+  }
+};
 
-  // We start by connecting to a WiFi network
-  delay(1000);
-  Serial.println();
-  Serial.println();
-  Serial.print("Connecting to ");
-  Serial.println(ssid);
+LSM6DSO myIMU;
+TFT_eSPI display = TFT_eSPI();
 
-  WiFi.begin(ssid, pass);
+void calibrate() {
+  Serial.println("Calibrating...");
+  float sumX = 0;
+  float sumY = 0;
+  float sumZ = 0;
 
-  while (WiFi.status() != WL_CONNECTED) {
-      delay(500);
-      Serial.print(".");
+  for (int i = 0; i < 100; i++) {
+    xval[i] = myIMU.readFloatAccelX();
+    sumX = xval[i] + sumX;
+
+    yval[i] = myIMU.readFloatAccelY();
+    sumY = yval[i] + sumY;
+
+    zval[i] = myIMU.readFloatAccelZ();
+    sumZ = zval[i] + sumZ;
+
   }
 
-  Serial.println("");
-  Serial.println("WiFi connected");
-  Serial.println("IP address: ");
-  Serial.println(WiFi.localIP());
-  Serial.println("MAC address: ");
-  Serial.println(WiFi.macAddress());
+  xavg = sumX / 100.0;
+  yavg = sumY / 100.0;
+  zavg = sumZ / 100.0;
 
+  // for (int i = 0; i < 100; i++) {
+  //   xval[i] = myIMU.readFloatAccelX();
+  //   sum = xval[i] + sum;
+  // }
+
+  // delay(100);
+  // xavg = sum / 100.0;
+  // Serial.println(xavg);
+
+  // for (int j = 0; j < 100; j++)
+  // {
+  //   yval[j] = myIMU.readFloatAccelY();
+  //   sum1 = yval[j] + sum1;
+  // }
+
+  // yavg = sum1 / 100.0;
+  // Serial.println(yavg);
+  // delay(100);
+
+  // for (int q = 0; q < 100; q++)
+  // {
+  //   zval[q] = myIMU.readFloatAccelZ();
+  //   sum2 = zval[q] + sum2;
+  // }
+
+  // zavg = sum2 / 100.0;
+  delay(100);
+  // Serial.println(zavg);
+  Serial.println("Calibrated!");
+}
+
+void setup() {
+  // Setup serial
+  Serial.begin(9600);
+  delay(500);
+
+  // Setup display
+  display.init();
+  display.fillScreen(TFT_BLACK);
+  display.setRotation(1);
+  display.setTextColor(TFT_WHITE, TFT_BLACK);
+
+  // Setup LED
+  pinMode(32, OUTPUT);
+
+  // Setup IMU
+  Wire.begin();
+  delay(10);
+  if (myIMU.begin()) {
+    Serial.println("IMU ready.");
+  }
+  else {
+    Serial.println("Could not connect to IMU.");
+  }
+
+  if (myIMU.initialize(BASIC_SETTINGS)) {
+    Serial.println("Loaded IMU settings.");
+  }
+
+  // Setup BLE
+  BLEDevice::init("MyESP32");
+  BLEServer *pServer = BLEDevice::createServer();
+  
+  BLEService *pService = pServer->createService(SERVICE_UUID);
+  
+  BLECharacteristic *pCharacteristic = pService->createCharacteristic(
+                                          CHARACTERISTIC_UUID,
+                                          BLECharacteristic::PROPERTY_READ |
+                                          BLECharacteristic::PROPERTY_WRITE
+                                        );
+  
+  pCharacteristic->setCallbacks(new MyCallbacks());
+  
+  pCharacteristic->setValue("Hello World");
+  pService->start();
+  
+  BLEAdvertising *pAdvertising = pServer->getAdvertising();
+  pAdvertising->start();
+
+  // Setup pedometer
+  calibrate();
+
+  // Set starting time of pedometer
+  lastTime = millis();
 }
 
 void loop() {
-  int err = 0;
-  
-  WiFiClient c;
-  HttpClient http(c);
+  // Every 100 seconds, reset the arrays
+  int currTime = millis();
+  if (samplesCount == 100 || currTime - lastTime >= 20000) {
+    memset(totvect, 0, sizeof(totvect));
+    memset(totave, 0, sizeof(totave)); 
+    memset(xaccl, 0, sizeof(xaccl)); 
+    memset(yaccl, 0, sizeof(yaccl)); 
+    memset(zaccl, 0, sizeof(zaccl));
 
-  // READ SENSOR DATA
-  Serial.println("Type,\tStatus,\tHumidity (%),\tTemperature (C)");
-  Serial.print("DHT20, \t");
-  int status = DHT.read();
-  switch (status)
-  {
-  case DHT20_OK:
-    Serial.print("OK,\t");
-    break;
-  case DHT20_ERROR_CHECKSUM:
-    Serial.print("Checksum error,\t");
-    break;
-  case DHT20_ERROR_CONNECT:
-    Serial.print("Connect error,\t");
-    break;
-  case DHT20_MISSING_BYTES:
-    Serial.print("Missing bytes,\t");
-    break;
-  default:
-    Serial.print("Unknown error,\t");
-    break;
+    samplesCount = 0;
+
+    // update last time we updated a step
+    lastTime = currTime;
   }
-  // DISPLAY DATA, sensor has only one decimal.
-  float humidity = DHT.getHumidity();
-  float temperature = DHT.getTemperature();
 
-  Serial.print(humidity, 1);
-  Serial.print(",\t");
-  Serial.println(temperature, 1);
-  Serial.println();
+  // Get gyroscope readings
+  xaccl[samplesCount] = myIMU.readFloatAccelX();
+  yaccl[samplesCount] = myIMU.readFloatAccelY();
+  zaccl[samplesCount] = myIMU.readFloatAccelZ();
 
-  // Build the url path
-  String kPath = "/?temp=" + String(temperature, 2) + "&hum=" + String(humidity, 2);
-  char kPathChar[50];
-  kPath.toCharArray(kPathChar, 50);
+  // Get distance value from XYZ coord
+  float squaredX = pow((xaccl[samplesCount] - xavg),2);
+  float squaredY = pow((yaccl[samplesCount] - yavg),2); 
+  float squaredZ = pow((zaccl[samplesCount] - zavg),2);
+  totvect[samplesCount] = sqrt(squaredX + squaredY + squaredZ);
+  totave[samplesCount] = (totvect[samplesCount] + totvect[samplesCount - 1]) / 2;
 
-  // Make the request
-  err = http.get(kHostname, kPort, kPathChar);
-  if (err == 0)
-  {
-    Serial.println("startedRequest ok");
-
-    err = http.responseStatusCode();
-    if (err >= 0)
-    {
-      Serial.print("Got status code: ");
-      Serial.println(err);
-
-      // Usually you'd check that the response code is 200 or a
-      // similar "success" code (200-299) before carrying on,
-      // but we'll print out whatever response we get
-
-      err = http.skipResponseHeaders();
-      if (err >= 0)
-      {
-        int bodyLen = http.contentLength();
-        Serial.print("Content length is: ");
-        Serial.println(bodyLen);
-        Serial.println();
-        Serial.println("Body returned follows:");
-      
-        // Now we've got to the body, so we can print it out
-        unsigned long timeoutStart = millis();
-        char c;
-        // Whilst we haven't timed out & haven't reached the end of the body
-        while ( (http.connected() || http.available()) &&
-               ((millis() - timeoutStart) < kNetworkTimeout) )
-        {
-            if (http.available())
-            {
-                c = http.read();
-                // Print out this character
-                Serial.print(c);
-               
-                bodyLen--;
-                // We read something, reset the timeout counter
-                timeoutStart = millis();
-            }
-            else
-            {
-                // We haven't got any data, so let's pause to allow some to
-                // arrive
-                delay(kNetworkDelay);
-            }
-        }
-      }
-      else
-      {
-        Serial.print("Failed to skip response headers: ");
-        Serial.println(err);
-      }
-    }
-    else
-    {    
-      Serial.print("Getting response failed: ");
-      Serial.println(err);
-    }
+  Serial.print(totave[samplesCount]);
+  Serial.print(" ");
+  Serial.println(threshold);
+  if (totave[samplesCount] > threshold && flag == 0) {
+    steps += 1;
+    flag = 1;
   }
-  else
-  {
-    Serial.print("Connect failed: ");
-    Serial.println(err);
-  }
-  http.stop();
 
-  delay(2000);
+  else if (totave[samplesCount] > threshold && flag == 1) {
+
+  }
+
+  if (totave[samplesCount] < threshold && flag == 1) {
+    flag = 0;
+  }
+
+  if (steps < 0) {
+    steps = 0;
+  }
+
+  Serial.println('\n');
+  Serial.print("steps: ");
+  Serial.println(steps);
+
+  uint16_t x = display.width() / 2;
+  uint16_t y = display.height() / 2;
+
+  // Set datum to Middle Right
+  display.setTextDatum(MR_DATUM);
+
+  // Set the padding to the maximum width that the digits could occupy in font 4
+  // This ensures small numbers obliterate large ones on the screen
+  display.setTextPadding( display.textWidth("8888", 7) );
+
+  // Draw a floating point number with 2 decimal places with right datum in font 4
+  display.drawNumber(steps, x, y, 7);
+
+  digitalWrite(32, ledOn ? HIGH : LOW);
+
+  samplesCount++;
+
+  delay(500);
 }
