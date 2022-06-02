@@ -21,11 +21,11 @@ const char* ntpServer = "pool.ntp.org";
 // Variable to save current epoch time
 unsigned long epochTime; 
 
-char ssid[] = "Berkeley Boys";    // your network SSID (name) 
-char pass[] = "pinkflamingo3"; // your network password (use for WPA, or use as key for WEP)
+char ssid[] = "";    // your network SSID (name) 
+char pass[] = ""; // your network password (use for WPA, or use as key for WEP)
 
 // Name of the server we want to connect to
-const char kHostname[] = "18.188.228.61";
+const char kHostname[] = "";
 const int kPort = 5000;
 
 // Number of milliseconds to wait without receiving any data before we give up
